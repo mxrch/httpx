@@ -6,6 +6,10 @@ import urllib.request
 from collections.abc import Mapping
 from http.cookiejar import Cookie, CookieJar
 
+from ._config import (
+    DEFAULT_LIMITS,
+    Limits,
+)
 from ._content import ByteStream, UnattachedStream, encode_request, encode_response
 from ._decoders import (
     SUPPORTED_DECODERS,
@@ -30,6 +34,7 @@ from ._multipart import get_multipart_boundary_from_content_type
 from ._status_codes import codes
 from ._types import (
     AsyncByteStream,
+    CertTypes,
     CookieTypes,
     HeaderTypes,
     QueryParamTypes,
@@ -39,6 +44,8 @@ from ._types import (
     RequestFiles,
     ResponseContent,
     ResponseExtensions,
+    ProxiesTypes,
+    VerifyTypes,
     SyncByteStream,
 )
 from ._urls import URL
@@ -50,7 +57,12 @@ from ._utils import (
     obfuscate_sensitive_headers,
     parse_content_type_charset,
     parse_header_links,
+    get_proxy_map,
+    init_transport,
+    init_proxy_transport,
+    URLPattern
 )
+from ._transports.base import AsyncBaseTransport
 
 
 class Headers(typing.MutableMapping[str, str]):
@@ -310,6 +322,16 @@ class Request:
         method: typing.Union[str, bytes],
         url: typing.Union["URL", str],
         *,
+        proxies: typing.Optional[ProxiesTypes] = None,
+        verify: VerifyTypes = True,
+        trust_env: bool = True,
+        transport: typing.Optional[AsyncBaseTransport] = None,
+        app: typing.Optional[typing.Callable[..., typing.Any]] = None,
+        mounts: typing.Optional[typing.Mapping[str, AsyncBaseTransport]] = None,
+        cert: typing.Optional[CertTypes] = None,
+        http1: bool = True,
+        http2: bool = False,
+        limits: Limits = DEFAULT_LIMITS,
         params: typing.Optional[QueryParamTypes] = None,
         headers: typing.Optional[HeaderTypes] = None,
         cookies: typing.Optional[CookieTypes] = None,
@@ -330,6 +352,40 @@ class Request:
             self.url = self.url.copy_merge_params(params=params)
         self.headers = Headers(headers)
         self.extensions = {} if extensions is None else extensions
+
+        allow_env_proxies = trust_env and app is None and transport is None
+        proxy_map = get_proxy_map(proxies, allow_env_proxies)
+
+        self._transport = init_transport(
+            verify=verify,
+            cert=cert,
+            http1=http1,
+            http2=http2,
+            limits=limits,
+            transport=transport,
+            app=app,
+            trust_env=trust_env,
+        )
+
+        self._mounts: typing.Dict[URLPattern, typing.Optional[AsyncBaseTransport]] = {
+            URLPattern(key): None
+            if proxy is None
+            else init_proxy_transport(
+                proxy,
+                verify=verify,
+                cert=cert,
+                http1=http1,
+                http2=http2,
+                limits=limits,
+                trust_env=trust_env,
+            )
+            for key, proxy in proxy_map.items()
+        }
+        if mounts is not None:
+            self._mounts.update(
+                {URLPattern(key): transport for key, transport in mounts.items()}
+            )
+        self._mounts = dict(sorted(self._mounts.items()))
 
         if cookies:
             Cookies(cookies).set_cookie_header(self)

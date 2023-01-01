@@ -12,7 +12,6 @@ from ._config import (
     DEFAULT_MAX_REDIRECTS,
     DEFAULT_TIMEOUT_CONFIG,
     Limits,
-    Proxy,
     Timeout,
 )
 from ._decoders import SUPPORTED_DECODERS
@@ -26,8 +25,7 @@ from ._models import Cookies, Headers, Request, Response
 from ._status_codes import codes
 from ._transports.asgi import ASGITransport
 from ._transports.base import AsyncBaseTransport, BaseTransport
-from ._transports.default import AsyncHTTPTransport, HTTPTransport
-from ._transports.wsgi import WSGITransport
+from ._transports.default import AsyncHTTPTransport
 from ._types import (
     AsyncByteStream,
     AuthTypes,
@@ -50,10 +48,12 @@ from ._utils import (
     NetRCInfo,
     Timer,
     URLPattern,
-    get_environment_proxies,
     get_logger,
+    get_proxy_map,
     is_https_redirect,
     same_origin,
+    init_transport,
+    init_proxy_transport,
 )
 
 # The type annotation for @classmethod and context managers here follows PEP 484
@@ -210,26 +210,6 @@ class BaseClient:
             return url
         return url.copy_with(raw_path=url.raw_path + b"/")
 
-    def _get_proxy_map(
-        self, proxies: typing.Optional[ProxiesTypes], allow_env_proxies: bool
-    ) -> typing.Dict[str, typing.Optional[Proxy]]:
-        if proxies is None:
-            if allow_env_proxies:
-                return {
-                    key: None if url is None else Proxy(url=url)
-                    for key, url in get_environment_proxies().items()
-                }
-            return {}
-        if isinstance(proxies, dict):
-            new_proxies = {}
-            for key, value in proxies.items():
-                proxy = Proxy(url=value) if isinstance(value, (str, URL)) else value
-                new_proxies[str(key)] = proxy
-            return new_proxies
-        else:
-            proxy = Proxy(url=proxies) if isinstance(proxies, (str, URL)) else proxies
-            return {"all://": proxy}
-
     @property
     def timeout(self) -> Timeout:
         return self._timeout
@@ -324,6 +304,16 @@ class BaseClient:
         method: str,
         url: URLTypes,
         *,
+        proxies: typing.Optional[ProxiesTypes] = None,
+        verify: VerifyTypes = True,
+        trust_env: bool = True,
+        transport: typing.Optional[AsyncBaseTransport] = None,
+        app: typing.Optional[typing.Callable[..., typing.Any]] = None,
+        mounts: typing.Optional[typing.Mapping[str, AsyncBaseTransport]] = None,
+        cert: typing.Optional[CertTypes] = None,
+        http1: bool = True,
+        http2: bool = False,
+        limits: Limits = DEFAULT_LIMITS,
         content: typing.Optional[RequestContent] = None,
         data: typing.Optional[RequestData] = None,
         files: typing.Optional[RequestFiles] = None,
@@ -368,6 +358,16 @@ class BaseClient:
             headers=headers,
             cookies=cookies,
             extensions=extensions,
+            proxies=proxies,
+            verify=verify,
+            trust_env=trust_env,
+            app=app,
+            transport=transport,
+            mounts=mounts,
+            cert=cert,
+            http1=http1,
+            http2=http2,
+            limits=limits,
         )
 
     def _merge_url(self, url: URLTypes) -> URL:
@@ -674,9 +674,9 @@ class Client(BaseClient):
                 ) from None
 
         allow_env_proxies = trust_env and app is None and transport is None
-        proxy_map = self._get_proxy_map(proxies, allow_env_proxies)
+        proxy_map = get_proxy_map(proxies, allow_env_proxies)
 
-        self._transport = self._init_transport(
+        self._transport = init_transport(
             verify=verify,
             cert=cert,
             http1=http1,
@@ -689,7 +689,7 @@ class Client(BaseClient):
         self._mounts: typing.Dict[URLPattern, typing.Optional[BaseTransport]] = {
             URLPattern(key): None
             if proxy is None
-            else self._init_proxy_transport(
+            else init_proxy_transport(
                 proxy,
                 verify=verify,
                 cert=cert,
@@ -706,52 +706,6 @@ class Client(BaseClient):
             )
 
         self._mounts = dict(sorted(self._mounts.items()))
-
-    def _init_transport(
-        self,
-        verify: VerifyTypes = True,
-        cert: typing.Optional[CertTypes] = None,
-        http1: bool = True,
-        http2: bool = False,
-        limits: Limits = DEFAULT_LIMITS,
-        transport: typing.Optional[BaseTransport] = None,
-        app: typing.Optional[typing.Callable[..., typing.Any]] = None,
-        trust_env: bool = True,
-    ) -> BaseTransport:
-        if transport is not None:
-            return transport
-
-        if app is not None:
-            return WSGITransport(app=app)
-
-        return HTTPTransport(
-            verify=verify,
-            cert=cert,
-            http1=http1,
-            http2=http2,
-            limits=limits,
-            trust_env=trust_env,
-        )
-
-    def _init_proxy_transport(
-        self,
-        proxy: Proxy,
-        verify: VerifyTypes = True,
-        cert: typing.Optional[CertTypes] = None,
-        http1: bool = True,
-        http2: bool = False,
-        limits: Limits = DEFAULT_LIMITS,
-        trust_env: bool = True,
-    ) -> BaseTransport:
-        return HTTPTransport(
-            verify=verify,
-            cert=cert,
-            http1=http1,
-            http2=http2,
-            limits=limits,
-            trust_env=trust_env,
-            proxy=proxy,
-        )
 
     def _transport_for_url(self, url: URL) -> BaseTransport:
         """
@@ -1395,9 +1349,9 @@ class AsyncClient(BaseClient):
                 ) from None
 
         allow_env_proxies = trust_env and app is None and transport is None
-        proxy_map = self._get_proxy_map(proxies, allow_env_proxies)
+        proxy_map = get_proxy_map(proxies, allow_env_proxies)
 
-        self._transport = self._init_transport(
+        self._transport = init_transport(
             verify=verify,
             cert=cert,
             http1=http1,
@@ -1411,7 +1365,7 @@ class AsyncClient(BaseClient):
         self._mounts: typing.Dict[URLPattern, typing.Optional[AsyncBaseTransport]] = {
             URLPattern(key): None
             if proxy is None
-            else self._init_proxy_transport(
+            else init_proxy_transport(
                 proxy,
                 verify=verify,
                 cert=cert,
@@ -1428,59 +1382,14 @@ class AsyncClient(BaseClient):
             )
         self._mounts = dict(sorted(self._mounts.items()))
 
-    def _init_transport(
-        self,
-        verify: VerifyTypes = True,
-        cert: typing.Optional[CertTypes] = None,
-        http1: bool = True,
-        http2: bool = False,
-        limits: Limits = DEFAULT_LIMITS,
-        transport: typing.Optional[AsyncBaseTransport] = None,
-        app: typing.Optional[typing.Callable[..., typing.Any]] = None,
-        trust_env: bool = True,
-    ) -> AsyncBaseTransport:
-        if transport is not None:
-            return transport
-
-        if app is not None:
-            return ASGITransport(app=app)
-
-        return AsyncHTTPTransport(
-            verify=verify,
-            cert=cert,
-            http1=http1,
-            http2=http2,
-            limits=limits,
-            trust_env=trust_env,
-        )
-
-    def _init_proxy_transport(
-        self,
-        proxy: Proxy,
-        verify: VerifyTypes = True,
-        cert: typing.Optional[CertTypes] = None,
-        http1: bool = True,
-        http2: bool = False,
-        limits: Limits = DEFAULT_LIMITS,
-        trust_env: bool = True,
-    ) -> AsyncBaseTransport:
-        return AsyncHTTPTransport(
-            verify=verify,
-            cert=cert,
-            http2=http2,
-            limits=limits,
-            trust_env=trust_env,
-            proxy=proxy,
-        )
-
-    def _transport_for_url(self, url: URL) -> AsyncBaseTransport:
+    def _transport_for_url(self, request: Request) -> AsyncBaseTransport:
         """
         Returns the transport instance that should be used for a given URL.
         This will either be the standard connection pool, or a proxy.
         """
-        for pattern, transport in self._mounts.items():
-            if pattern.matches(url):
-                return self._transport if transport is None else transport
+        for pattern, transport in request._mounts.items():
+            if pattern.matches(request.url):
+                return request._transport if transport is None else transport
 
         return self._transport
 
@@ -1497,6 +1406,16 @@ class AsyncClient(BaseClient):
         headers: typing.Optional[HeaderTypes] = None,
         cookies: typing.Optional[CookieTypes] = None,
         auth: typing.Union[AuthTypes, UseClientDefault, None] = USE_CLIENT_DEFAULT,
+        proxies: typing.Optional[ProxiesTypes] = None,
+        verify: VerifyTypes = True,
+        trust_env: bool = True,
+        transport: typing.Optional[AsyncBaseTransport] = None,
+        app: typing.Optional[typing.Callable[..., typing.Any]] = None,
+        mounts: typing.Optional[typing.Mapping[str, AsyncBaseTransport]] = None,
+        cert: typing.Optional[CertTypes] = None,
+        http1: bool = True,
+        http2: bool = False,
+        limits: Limits = DEFAULT_LIMITS,
         follow_redirects: typing.Union[bool, UseClientDefault] = USE_CLIENT_DEFAULT,
         timeout: typing.Union[TimeoutTypes, UseClientDefault] = USE_CLIENT_DEFAULT,
         extensions: typing.Optional[RequestExtensions] = None,
@@ -1518,6 +1437,16 @@ class AsyncClient(BaseClient):
         [0]: /advanced/#merging-of-configuration
         """
         request = self.build_request(
+            verify=verify,
+            proxies=proxies,
+            trust_env=trust_env,
+            app=app,
+            transport=transport,
+            mounts=mounts,
+            cert=cert,
+            http1=http1,
+            http2=http2,
+            limits=limits,
             method=method,
             url=url,
             content=content,
@@ -1590,6 +1519,7 @@ class AsyncClient(BaseClient):
         *,
         stream: bool = False,
         auth: typing.Union[AuthTypes, UseClientDefault, None] = USE_CLIENT_DEFAULT,
+
         follow_redirects: typing.Union[bool, UseClientDefault] = USE_CLIENT_DEFAULT,
     ) -> Response:
         """
@@ -1709,7 +1639,7 @@ class AsyncClient(BaseClient):
         """
         Sends a single request, without handling any redirections.
         """
-        transport = self._transport_for_url(request.url)
+        transport = self._transport_for_url(request)
         timer = Timer()
         await timer.async_start()
 
@@ -1745,6 +1675,16 @@ class AsyncClient(BaseClient):
         headers: typing.Optional[HeaderTypes] = None,
         cookies: typing.Optional[CookieTypes] = None,
         auth: typing.Union[AuthTypes, UseClientDefault, None] = USE_CLIENT_DEFAULT,
+        proxies: typing.Optional[ProxiesTypes] = None,
+        verify: VerifyTypes = True,
+        trust_env: bool = True,
+        transport: typing.Optional[AsyncBaseTransport] = None,
+        app: typing.Optional[typing.Callable[..., typing.Any]] = None,
+        mounts: typing.Optional[typing.Mapping[str, AsyncBaseTransport]] = None,
+        cert: typing.Optional[CertTypes] = None,
+        http1: bool = True,
+        http2: bool = False,
+        limits: Limits = DEFAULT_LIMITS,
         follow_redirects: typing.Union[bool, UseClientDefault] = USE_CLIENT_DEFAULT,
         timeout: typing.Union[TimeoutTypes, UseClientDefault] = USE_CLIENT_DEFAULT,
         extensions: typing.Optional[RequestExtensions] = None,
@@ -1761,6 +1701,16 @@ class AsyncClient(BaseClient):
             headers=headers,
             cookies=cookies,
             auth=auth,
+            proxies=proxies,
+            verify=verify,
+            trust_env=trust_env,
+            app=app,
+            transport=transport,
+            mounts=mounts,
+            cert=cert,
+            http1=http1,
+            http2=http2,
+            limits=limits,
             follow_redirects=follow_redirects,
             timeout=timeout,
             extensions=extensions,

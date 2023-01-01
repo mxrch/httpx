@@ -13,7 +13,15 @@ from urllib.request import getproxies
 
 import sniffio
 
-from ._types import PrimitiveData
+from ._config import (
+    DEFAULT_LIMITS,
+    Limits,
+    Proxy,
+)
+from ._transports.base import BaseTransport
+from ._transports.default import HTTPTransport
+from ._transports.wsgi import WSGITransport
+from ._types import PrimitiveData, ProxiesTypes, CertTypes, VerifyTypes
 
 if typing.TYPE_CHECKING:  # pragma: no cover
     from ._urls import URL
@@ -392,6 +400,69 @@ def peek_filelike_length(stream: typing.Any) -> typing.Optional[int]:
 
     return length
 
+def get_proxy_map(
+    proxies: typing.Optional[ProxiesTypes], allow_env_proxies: bool
+) -> typing.Dict[str, typing.Optional[Proxy]]:
+    if proxies is None:
+        if allow_env_proxies:
+            return {
+                key: None if url is None else Proxy(url=url)
+                for key, url in get_environment_proxies().items()
+            }
+        return {}
+    if isinstance(proxies, dict):
+        new_proxies = {}
+        for key, value in proxies.items():
+            proxy = Proxy(url=value) if isinstance(value, (str, URL)) else value
+            new_proxies[str(key)] = proxy
+        return new_proxies
+    else:
+        proxy = Proxy(url=proxies) if isinstance(proxies, (str, URL)) else proxies
+        return {"all://": proxy}
+
+def init_transport(
+    verify: VerifyTypes = True,
+    cert: typing.Optional[CertTypes] = None,
+    http1: bool = True,
+    http2: bool = False,
+    limits: Limits = DEFAULT_LIMITS,
+    transport: typing.Optional[BaseTransport] = None,
+    app: typing.Optional[typing.Callable[..., typing.Any]] = None,
+    trust_env: bool = True,
+) -> BaseTransport:
+    if transport is not None:
+        return transport
+
+    if app is not None:
+        return WSGITransport(app=app)
+
+    return HTTPTransport(
+        verify=verify,
+        cert=cert,
+        http1=http1,
+        http2=http2,
+        limits=limits,
+        trust_env=trust_env,
+    )
+
+def init_proxy_transport(
+    proxy: Proxy,
+    verify: VerifyTypes = True,
+    cert: typing.Optional[CertTypes] = None,
+    http1: bool = True,
+    http2: bool = False,
+    limits: Limits = DEFAULT_LIMITS,
+    trust_env: bool = True,
+) -> BaseTransport:
+    return HTTPTransport(
+        verify=verify,
+        cert=cert,
+        http1=http1,
+        http2=http2,
+        limits=limits,
+        trust_env=trust_env,
+        proxy=proxy,
+    )
 
 class Timer:
     async def _get_time(self) -> float:
