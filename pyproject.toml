@@ -47,9 +47,6 @@ socks = [
     "socksio==1.*",
 ]
 
-[project.scripts]
-httpx = "httpx:main"
-
 [project.urls]
 Changelog = "https://github.com/encode/httpx/blob/master/CHANGELOG.md"
 Documentation = "https://www.python-httpx.org"
