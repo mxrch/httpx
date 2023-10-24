@@ -1,6 +1,6 @@
+import logging
 import os
 import ssl
-import sys
 import typing
 from pathlib import Path
 
@@ -10,7 +10,7 @@ from ._compat import set_minimum_tls_version_1_2
 from ._models import Headers
 from ._types import CertTypes, HeaderTypes, TimeoutTypes, URLTypes, VerifyTypes
 from ._urls import URL
-from ._utils import get_ca_bundle_from_env, get_logger
+from ._utils import get_ca_bundle_from_env
 
 DEFAULT_CIPHERS = ":".join(
     [
@@ -32,7 +32,7 @@ DEFAULT_CIPHERS = ":".join(
 )
 
 
-logger = get_logger(__name__)
+logger = logging.getLogger("httpx")
 
 
 class UnsetType:
@@ -75,12 +75,12 @@ class SSLConfig:
         self.ssl_context = self.load_ssl_context()
 
     def load_ssl_context(self) -> ssl.SSLContext:
-        logger.trace(
-            f"load_ssl_context "
-            f"verify={self.verify!r} "
-            f"cert={self.cert!r} "
-            f"trust_env={self.trust_env!r} "
-            f"http2={self.http2!r}"
+        logger.debug(
+            "load_ssl_context verify=%r cert=%r trust_env=%r http2=%r",
+            self.verify,
+            self.cert,
+            self.trust_env,
+            self.http2,
         )
 
         if self.verify:
@@ -127,11 +127,10 @@ class SSLConfig:
 
         # Signal to server support for PHA in TLS 1.3. Raises an
         # AttributeError if only read-only access is implemented.
-        if sys.version_info >= (3, 8):  # pragma: no cover
-            try:
-                context.post_handshake_auth = True
-            except AttributeError:  # pragma: no cover
-                pass
+        try:
+            context.post_handshake_auth = True
+        except AttributeError:  # pragma: no cover
+            pass
 
         # Disable using 'commonName' for SSLContext.check_hostname
         # when the 'subjectAltName' extension isn't available.
@@ -141,11 +140,13 @@ class SSLConfig:
             pass
 
         if ca_bundle_path.is_file():
-            logger.trace(f"load_verify_locations cafile={ca_bundle_path!s}")
-            context.load_verify_locations(cafile=str(ca_bundle_path))
+            cafile = str(ca_bundle_path)
+            logger.debug("load_verify_locations cafile=%r", cafile)
+            context.load_verify_locations(cafile=cafile)
         elif ca_bundle_path.is_dir():
-            logger.trace(f"load_verify_locations capath={ca_bundle_path!s}")
-            context.load_verify_locations(capath=str(ca_bundle_path))
+            capath = str(ca_bundle_path)
+            logger.debug("load_verify_locations capath=%r", capath)
+            context.load_verify_locations(capath=capath)
 
         self._load_client_certs(context)
 
@@ -165,10 +166,9 @@ class SSLConfig:
             alpn_idents = ["http/1.1", "h2"] if self.http2 else ["http/1.1"]
             context.set_alpn_protocols(alpn_idents)
 
-        if sys.version_info >= (3, 8):  # pragma: no cover
-            keylogfile = os.environ.get("SSLKEYLOGFILE")
-            if keylogfile and self.trust_env:
-                context.keylog_filename = keylogfile
+        keylogfile = os.environ.get("SSLKEYLOGFILE")
+        if keylogfile and self.trust_env:
+            context.keylog_filename = keylogfile
 
         return context
 
@@ -323,6 +323,7 @@ class Proxy:
         self,
         url: URLTypes,
         *,
+        ssl_context: typing.Optional[ssl.SSLContext] = None,
         auth: typing.Optional[typing.Tuple[str, str]] = None,
         headers: typing.Optional[HeaderTypes] = None,
     ):
@@ -340,6 +341,7 @@ class Proxy:
         self.url = url
         self.auth = auth
         self.headers = headers
+        self.ssl_context = ssl_context
 
     @property
     def raw_auth(self) -> typing.Optional[typing.Tuple[bytes, bytes]]:

@@ -4,9 +4,85 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## 0.23.1
+## Unreleased
 
-**Note**: The 0.23.1 release should have used a proper version bump, rather than a minor point release. 
+### Added
+
+* Add support for Python 3.12. (#2854)
+
+### Fixed
+
+* Raise `ValueError` on `Response.encoding` being set after `Response.text` has been accessed. (#2852)
+
+## 0.25.0 (11th Sep, 2023)
+
+### Removed
+
+* Drop support for Python 3.7. (#2813)
+
+### Added
+
+* Support HTTPS proxies. (#2845)
+* Change the type of `Extensions` from `Mapping[Str, Any]` to `MutableMapping[Str, Any]`. (#2803)
+* Add `socket_options` argument to `httpx.HTTPTransport` and `httpx.AsyncHTTPTransport` classes. (#2716)
+* The `Response.raise_for_status()` method now returns the response instance. For example: `data = httpx.get('...').raise_for_status().json()`. (#2776)
+
+### Fixed
+
+* Return `500` error response instead of exceptions when `raise_app_exceptions=False` is set on `ASGITransport`. (#2669)
+* Ensure all `WSGITransport` environs have a `SERVER_PROTOCOL`. (#2708)
+* Always encode forward slashes as `%2F` in query parameters (#2723)
+* Use Mozilla documentation instead of `httpstatuses.com` for HTTP error reference (#2768)
+
+## 0.24.1 (17th May, 2023)
+
+### Added
+
+* Provide additional context in some `InvalidURL` exceptions. (#2675)
+
+### Fixed
+
+* Fix optional percent-encoding behaviour. (#2671)
+* More robust checking for opening upload files in binary mode. (#2630)
+* Properly support IP addresses in `NO_PROXY` environment variable. (#2659)
+* Set default file for `NetRCAuth()` to `None` to use the stdlib default. (#2667)
+* Set logging request lines to INFO level for async requests, in line with sync requests. (#2656)
+* Fix which gen-delims need to be escaped for path/query/fragment components in URL. (#2701)
+
+## 0.24.0 (6th April, 2023)
+
+### Changed
+
+* The logging behaviour has been changed to be more in-line with other standard Python logging usages. We no longer have a custom `TRACE` log level, and we no longer use the `HTTPX_LOG_LEVEL` environment variable to auto-configure logging. We now have a significant amount of `DEBUG` logging available at the network level. Full documentation is available at https://www.python-httpx.org/logging/ (#2547, encode/httpcore#648)
+* The `Response.iter_lines()` method now matches the stdlib behaviour and does not include the newline characters. It also resolves a performance issue. (#2423)
+* Query parameter encoding switches from using + for spaces and %2F for forward slash, to instead using %20 for spaces and treating forward slash as a safe, unescaped character. This differs from `requests`, but is in line with browser behavior in Chrome, Safari, and Firefox. Both options are RFC valid. (#2543)
+* NetRC authentication is no longer automatically handled, but is instead supported by an explicit `httpx.NetRCAuth()` authentication class. See the documentation at https://www.python-httpx.org/advanced/#netrc-support (#2525)
+
+### Removed
+
+* The `rfc3986` dependancy has been removed. (#2252)
+
+## 0.23.3 (4th Jan, 2023)
+
+### Fixed
+
+* Version 0.23.2 accidentally included stricter type checking on query parameters. This shouldn've have been included in a minor version bump, and is now reverted. (#2523, #2539)
+
+## 0.23.2 (2nd Jan, 2023)
+
+### Added
+
+* Support digest auth nonce counting to avoid multiple auth requests. (#2463)
+
+### Fixed
+
+* Multipart file uploads where the file length cannot be determine now use chunked transfer encoding, rather than loading the entire file into memory in order to determine the `Content-Length`. (#2382)
+* Raise `TypeError` if content is passed a dict-instance. (#2495)
+* Partially revert the API breaking change in 0.23.1, which removed `RawURL`. We continue to expose a `url.raw` property which is now a plain named-tuple. This API is still expected to be deprecated, but we will do so with a major version bump. (#2481)
+
+## 0.23.1 (18th Nov, 2022)
+
+**Note**: The 0.23.1 release should have used a proper version bump, rather than a minor point release.
 There are API surface area changes that may affect some users.
 See the "Removed" section of these release notes for details.
 

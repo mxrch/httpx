@@ -86,7 +86,7 @@ def test_read_and_stream_data():
     assert content == request.content
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_aread_and_stream_data():
     # Ensure a request may still be streamed if it has been read.
     # Needed for cases such as authentication classes that read the request body.
@@ -105,7 +105,7 @@ def test_cannot_access_streaming_content_without_read():
 
     request = httpx.Request("POST", "http://example.org", content=streaming_body())
     with pytest.raises(httpx.RequestNotRead):
-        request.content
+        request.content  # noqa: B018
 
 
 def test_transfer_encoding_header():
@@ -192,7 +192,7 @@ def test_request_picklable():
     }
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_request_async_streaming_content_picklable():
     async def streaming_body(data: bytes) -> typing.AsyncIterator[bytes]:
         yield data
@@ -201,7 +201,7 @@ async def test_request_async_streaming_content_picklable():
     request = httpx.Request("POST", "http://example.org", content=data)
     pickle_request = pickle.loads(pickle.dumps(request))
     with pytest.raises(httpx.RequestNotRead):
-        pickle_request.content
+        pickle_request.content  # noqa: B018
     with pytest.raises(httpx.StreamClosed):
         await pickle_request.aread()
 
@@ -218,7 +218,7 @@ def test_request_generator_content_picklable():
     request = httpx.Request("POST", "http://example.org", content=content())
     pickle_request = pickle.loads(pickle.dumps(request))
     with pytest.raises(httpx.RequestNotRead):
-        pickle_request.content
+        pickle_request.content  # noqa: B018
     with pytest.raises(httpx.StreamClosed):
         pickle_request.read()
 

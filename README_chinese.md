@@ -101,7 +101,7 @@ $ pip install httpx
 $ pip install httpx[http2]
 ```
 
-HTTPX 要求 Python 3.7+ 版本。
+HTTPX 要求 Python 3.8+ 版本。
 
 ## 文档
 
@@ -126,8 +126,7 @@ HTTPX 项目依赖于这些优秀的库：
 * `httpcore` - `httpx` 基础传输接口实现。
   * `h11` - HTTP/1.1 支持。
 * `certifi` - SSL 证书。
-* `rfc3986` - URL 解析与规范化。
-  * `idna` - 国际化域名支持。
+* `idna` - 国际化域名支持。
 * `sniffio` - 异步库自动检测。
 
 以及这些可选的安装：

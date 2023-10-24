@@ -1,11 +1,9 @@
 import codecs
 import email.message
-import logging
+import ipaddress
 import mimetypes
-import netrc
 import os
 import re
-import sys
 import time
 import typing
 from pathlib import Path
@@ -67,11 +65,7 @@ def primitive_value_to_str(value: "PrimitiveData") -> str:
         return "false"
     elif value is None:
         return ""
-    elif isinstance(value, (str, float, int)):
-        return str(value)
-    raise TypeError(
-        f"Expected str, int, float, bool, or None. Got {type(value).__name__!r}."
-    )
+    return str(value)
 
 
 def is_known_encoding(encoding: str) -> bool:
@@ -130,37 +124,6 @@ def guess_json_utf(data: bytes) -> typing.Optional[str]:
             return "utf-32-le"
         # Did not detect a valid UTF-32 ascii-range character
     return None
-
-
-class NetRCInfo:
-    def __init__(self, files: typing.Optional[typing.List[str]] = None) -> None:
-        if files is None:
-            files = [os.getenv("NETRC", ""), "~/.netrc", "~/_netrc"]
-        self.netrc_files = files
-
-    @property
-    def netrc_info(self) -> typing.Optional[netrc.netrc]:
-        if not hasattr(self, "_netrc_info"):
-            self._netrc_info = None
-            for file_path in self.netrc_files:
-                expanded_path = Path(file_path).expanduser()
-                try:
-                    if expanded_path.is_file():
-                        self._netrc_info = netrc.netrc(str(expanded_path))
-                        break
-                except (netrc.NetrcParseError, IOError):  # pragma: no cover
-                    # Issue while reading the netrc file, ignore...
-                    pass
-        return self._netrc_info
-
-    def get_credentials(self, host: str) -> typing.Optional[typing.Tuple[str, str]]:
-        if self.netrc_info is None:
-            return None
-
-        auth_info = self.netrc_info.authenticators(host)
-        if auth_info is None or auth_info[2] is None:
-            return None
-        return (auth_info[0], auth_info[2])
 
 
 def get_ca_bundle_from_env() -> typing.Optional[str]:
@@ -232,50 +195,6 @@ def obfuscate_sensitive_headers(
         yield k, v
 
 
-_LOGGER_INITIALIZED = False
-TRACE_LOG_LEVEL = 5
-
-
-class Logger(logging.Logger):
-    # Stub for type checkers.
-    def trace(self, message: str, *args: typing.Any, **kwargs: typing.Any) -> None:
-        ...  # pragma: no cover
-
-
-def get_logger(name: str) -> Logger:
-    """
-    Get a `logging.Logger` instance, and optionally
-    set up debug logging based on the HTTPX_LOG_LEVEL environment variable.
-    """
-    global _LOGGER_INITIALIZED
-
-    if not _LOGGER_INITIALIZED:
-        _LOGGER_INITIALIZED = True
-        logging.addLevelName(TRACE_LOG_LEVEL, "TRACE")
-
-        log_level = os.environ.get("HTTPX_LOG_LEVEL", "").upper()
-        if log_level in ("DEBUG", "TRACE"):
-            logger = logging.getLogger("httpx")
-            logger.setLevel(logging.DEBUG if log_level == "DEBUG" else TRACE_LOG_LEVEL)
-            handler = logging.StreamHandler(sys.stderr)
-            handler.setFormatter(
-                logging.Formatter(
-                    fmt="%(levelname)s [%(asctime)s] %(name)s - %(message)s",
-                    datefmt="%Y-%m-%d %H:%M:%S",
-                )
-            )
-            logger.addHandler(handler)
-
-    logger = logging.getLogger(name)
-
-    def trace(message: str, *args: typing.Any, **kwargs: typing.Any) -> None:
-        logger.log(TRACE_LOG_LEVEL, message, *args, **kwargs)
-
-    logger.trace = trace  # type: ignore
-
-    return typing.cast(Logger, logger)
-
-
 def port_or_default(url: "URL") -> typing.Optional[int]:
     if url.port is not None:
         return url.port
@@ -341,7 +260,16 @@ def get_environment_proxies() -> typing.Dict[str, typing.Optional[str]]:
             # NO_PROXY=google.com is marked as "all://*google.com,
             #   which disables "www.google.com" and "google.com".
             #   (But not "wwwgoogle.com")
-            mounts[f"all://*{hostname}"] = None
+            # NO_PROXY can include domains, IPv6, IPv4 addresses and "localhost"
+            #   NO_PROXY=example.com,::1,localhost,192.168.0.0/16
+            if is_ipv4_hostname(hostname):
+                mounts[f"all://{hostname}"] = None
+            elif is_ipv6_hostname(hostname):
+                mounts[f"all://[{hostname}]"] = None
+            elif hostname.lower() == "localhost":
+                mounts[f"all://{hostname}"] = None
+            else:
+                mounts[f"all://*{hostname}"] = None
 
     return mounts
 
@@ -429,12 +357,12 @@ class URLPattern:
     A utility class currently used for making lookups against proxy keys...
 
     # Wildcard matching...
-    >>> pattern = URLPattern("all")
+    >>> pattern = URLPattern("all://")
     >>> pattern.matches(httpx.URL("http://example.com"))
     True
 
     # Witch scheme matching...
-    >>> pattern = URLPattern("https")
+    >>> pattern = URLPattern("https://")
     >>> pattern.matches(httpx.URL("https://example.com"))
     True
     >>> pattern.matches(httpx.URL("http://example.com"))
@@ -531,3 +459,19 @@ class URLPattern:
 
     def __eq__(self, other: typing.Any) -> bool:
         return isinstance(other, URLPattern) and self.pattern == other.pattern
+
+
+def is_ipv4_hostname(hostname: str) -> bool:
+    try:
+        ipaddress.IPv4Address(hostname.split("/")[0])
+    except Exception:
+        return False
+    return True
+
+
+def is_ipv6_hostname(hostname: str) -> bool:
+    try:
+        ipaddress.IPv6Address(hostname.split("/")[0])
+    except Exception:
+        return False
+    return True

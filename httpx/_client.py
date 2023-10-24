@@ -1,5 +1,6 @@
 import datetime
 import enum
+import logging
 import typing
 import warnings
 from contextlib import asynccontextmanager, contextmanager
@@ -47,11 +48,9 @@ from ._types import (
 )
 from ._urls import URL, QueryParams
 from ._utils import (
-    NetRCInfo,
     Timer,
     URLPattern,
     get_environment_proxies,
-    get_logger,
     is_https_redirect,
     same_origin,
 )
@@ -85,7 +84,7 @@ class UseClientDefault:
 USE_CLIENT_DEFAULT = UseClientDefault()
 
 
-logger = get_logger(__name__)
+logger = logging.getLogger("httpx")
 
 USER_AGENT = f"python-httpx/{__version__}"
 ACCEPT_ENCODING = ", ".join(
@@ -191,7 +190,6 @@ class BaseClient:
         }
         self._trust_env = trust_env
         self._default_encoding = default_encoding
-        self._netrc = NetRCInfo()
         self._state = ClientState.UNOPENED
 
     @property
@@ -455,11 +453,6 @@ class BaseClient:
         username, password = request.url.username, request.url.password
         if username or password:
             return BasicAuth(username=username, password=password)
-
-        if self.trust_env and "Authorization" not in request.headers:
-            credentials = self._netrc.get_credentials(request.url.host)
-            if credentials is not None:
-                return BasicAuth(username=credentials[0], password=credentials[1])
 
         return Auth()
 
@@ -1017,10 +1010,13 @@ class Client(BaseClient):
         self.cookies.extract_cookies(response)
         response.default_encoding = self._default_encoding
 
-        status = f"{response.status_code} {response.reason_phrase}"
-        response_line = f"{response.http_version} {status}"
-        logger.debug(
-            'HTTP Request: %s %s "%s"', request.method, request.url, response_line
+        logger.info(
+            'HTTP Request: %s %s "%s %d %s"',
+            request.method,
+            request.url,
+            response.http_version,
+            response.status_code,
+            response.reason_phrase,
         )
 
         return response
@@ -1318,7 +1314,8 @@ class AsyncClient(BaseClient):
     sending requests.
     * **verify** - *(optional)* SSL certificates (a.k.a CA bundle) used to
     verify the identity of requested hosts. Either `True` (default CA bundle),
-    a path to an SSL certificate file, or `False` (disable verification).
+    a path to an SSL certificate file, an `ssl.SSLContext`, or `False`
+    (which will disable verification).
     * **cert** - *(optional)* An SSL certificate used by the requested host
     to authenticate the client. Either a path to an SSL certificate file, or
     two-tuple of (certificate file, key file), or a three-tuple of (certificate
@@ -1729,10 +1726,13 @@ class AsyncClient(BaseClient):
         self.cookies.extract_cookies(response)
         response.default_encoding = self._default_encoding
 
-        status = f"{response.status_code} {response.reason_phrase}"
-        response_line = f"{response.http_version} {status}"
-        logger.debug(
-            'HTTP Request: %s %s "%s"', request.method, request.url, response_line
+        logger.info(
+            'HTTP Request: %s %s "%s %d %s"',
+            request.method,
+            request.url,
+            response.http_version,
+            response.status_code,
+            response.reason_phrase,
         )
 
         return response
