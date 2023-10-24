@@ -40,11 +40,6 @@ brotli = [
     "brotli; platform_python_implementation == 'CPython'",
     "brotlicffi; platform_python_implementation != 'CPython'",
 ]
-cli = [
-    "click==8.*",
-    "pygments==2.*",
-    "rich>=10,<13",
-]
 http2 = [
     "h2>=3,<5",
 ]
