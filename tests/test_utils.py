@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import random
@@ -10,11 +11,6 @@ from httpx._utils import (
     URLPattern,
     get_ca_bundle_from_env,
     get_environment_proxies,
-    guess_json_utf,
-    is_https_redirect,
-    obfuscate_sensitive_headers,
-    parse_header_links,
-    same_origin,
 )
 
 from .common import TESTS_DIR
@@ -34,12 +30,16 @@ from .common import TESTS_DIR
     ),
 )
 def test_encoded(encoding):
-    data = "{}".encode(encoding)
-    assert guess_json_utf(data) == encoding
+    content = '{"abc": 123}'.encode(encoding)
+    response = httpx.Response(200, content=content)
+    assert response.json() == {"abc": 123}
 
 
 def test_bad_utf_like_encoding():
-    assert guess_json_utf(b"\x00\x00\x00\x00") is None
+    content = b"\x00\x00\x00\x00"
+    response = httpx.Response(200, content=content)
+    with pytest.raises(json.decoder.JSONDecodeError):
+        response.json()
 
 
 @pytest.mark.parametrize(
@@ -52,8 +52,9 @@ def test_bad_utf_like_encoding():
     ),
 )
 def test_guess_by_bom(encoding, expected):
-    data = "\ufeff{}".encode(encoding)
-    assert guess_json_utf(data) == expected
+    content = '\ufeff{"abc": 123}'.encode(encoding)
+    response = httpx.Response(200, content=content)
+    assert response.json() == {"abc": 123}
 
 
 @pytest.mark.parametrize(
@@ -76,7 +77,13 @@ def test_guess_by_bom(encoding, expected):
     ),
 )
 def test_parse_header_links(value, expected):
-    assert parse_header_links(value) == expected
+    all_links = httpx.Response(200, headers={"link": value}).links.values()
+    assert all(link in all_links for link in expected)
+
+
+def test_parse_header_links_no_link():
+    all_links = httpx.Response(200).links
+    assert all_links == {}
 
 
 def test_logging_request(server, caplog):
@@ -104,7 +111,8 @@ def test_logging_redirect_chain(server, caplog):
         (
             "httpx",
             logging.INFO,
-            'HTTP Request: GET http://127.0.0.1:8000/redirect_301 "HTTP/1.1 301 Moved Permanently"',
+            "HTTP Request: GET http://127.0.0.1:8000/redirect_301"
+            ' "HTTP/1.1 301 Moved Permanently"',
         ),
         (
             "httpx",
@@ -191,6 +199,7 @@ def test_get_ssl_cert_file():
         ({"no_proxy": "localhost"}, {"all://localhost": None}),
         ({"no_proxy": "github.com"}, {"all://*github.com": None}),
         ({"no_proxy": ".github.com"}, {"all://*.github.com": None}),
+        ({"no_proxy": "http://github.com"}, {"http://github.com": None}),
     ],
 )
 def test_get_environment_proxies(environment, proxies):
@@ -208,40 +217,65 @@ def test_get_environment_proxies(environment, proxies):
     ],
 )
 def test_obfuscate_sensitive_headers(headers, output):
-    bytes_headers = [(k.encode(), v.encode()) for k, v in headers]
-    bytes_output = [(k.encode(), v.encode()) for k, v in output]
-    assert list(obfuscate_sensitive_headers(headers)) == output
-    assert list(obfuscate_sensitive_headers(bytes_headers)) == bytes_output
+    as_dict = {k: v for k, v in output}
+    headers_class = httpx.Headers({k: v for k, v in headers})
+    assert repr(headers_class) == f"Headers({as_dict!r})"
 
 
 def test_same_origin():
-    origin1 = httpx.URL("https://example.com")
-    origin2 = httpx.URL("HTTPS://EXAMPLE.COM:443")
-    assert same_origin(origin1, origin2)
+    origin = httpx.URL("https://example.com")
+    request = httpx.Request("GET", "HTTPS://EXAMPLE.COM:443")
+
+    client = httpx.Client()
+    headers = client._redirect_headers(request, origin, "GET")
+
+    assert headers["Host"] == request.url.netloc.decode("ascii")
 
 
 def test_not_same_origin():
-    origin1 = httpx.URL("https://example.com")
-    origin2 = httpx.URL("HTTP://EXAMPLE.COM")
-    assert not same_origin(origin1, origin2)
+    origin = httpx.URL("https://example.com")
+    request = httpx.Request("GET", "HTTP://EXAMPLE.COM:80")
+
+    client = httpx.Client()
+    headers = client._redirect_headers(request, origin, "GET")
+
+    assert headers["Host"] == origin.netloc.decode("ascii")
 
 
 def test_is_https_redirect():
-    url = httpx.URL("http://example.com")
-    location = httpx.URL("https://example.com")
-    assert is_https_redirect(url, location)
+    url = httpx.URL("https://example.com")
+    request = httpx.Request(
+        "GET", "http://example.com", headers={"Authorization": "empty"}
+    )
+
+    client = httpx.Client()
+    headers = client._redirect_headers(request, url, "GET")
+
+    assert "Authorization" in headers
 
 
 def test_is_not_https_redirect():
-    url = httpx.URL("http://example.com")
-    location = httpx.URL("https://www.example.com")
-    assert not is_https_redirect(url, location)
+    url = httpx.URL("https://www.example.com")
+    request = httpx.Request(
+        "GET", "http://example.com", headers={"Authorization": "empty"}
+    )
+
+    client = httpx.Client()
+    headers = client._redirect_headers(request, url, "GET")
+
+    assert "Authorization" not in headers
 
 
 def test_is_not_https_redirect_if_not_default_ports():
-    url = httpx.URL("http://example.com:9999")
-    location = httpx.URL("https://example.com:1337")
-    assert not is_https_redirect(url, location)
+    url = httpx.URL("https://example.com:1337")
+    request = httpx.Request(
+        "GET", "http://example.com:9999", headers={"Authorization": "empty"}
+    )
+
+    client = httpx.Client()
+    headers = client._redirect_headers(request, url, "GET")
+
+    assert "Authorization" not in headers
 
 
 @pytest.mark.parametrize(

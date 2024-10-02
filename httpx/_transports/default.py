@@ -23,6 +23,9 @@ client = httpx.Client(transport=transport)
 transport = httpx.HTTPTransport(uds="socket.uds")
 client = httpx.Client(transport=transport)
 """
+
+from __future__ import annotations
+
 import contextlib
 import typing
 from types import TracebackType
@@ -47,7 +50,8 @@ from .._exceptions import (
     WriteTimeout,
 )
 from .._models import Request, Response
-from .._types import AsyncByteStream, CertTypes, SyncByteStream, VerifyTypes
+from .._types import AsyncByteStream, CertTypes, ProxyTypes, SyncByteStream, VerifyTypes
+from .._urls import URL
 from .base import AsyncBaseTransport, BaseTransport
 
 T = typing.TypeVar("T", bound="HTTPTransport")
@@ -59,12 +63,14 @@ SOCKET_OPTION = typing.Union[
     typing.Tuple[int, int, None, int],
 ]
 
+__all__ = ["AsyncHTTPTransport", "HTTPTransport"]
+
 
 @contextlib.contextmanager
 def map_httpcore_exceptions() -> typing.Iterator[None]:
     try:
         yield
-    except Exception as exc:  # noqa: PIE-786
+    except Exception as exc:
         mapped_exc = None
 
         for from_exc, to_exc in HTTPCORE_EXC_MAP.items():
@@ -102,7 +108,7 @@ HTTPCORE_EXC_MAP = {
 
 
 class ResponseStream(SyncByteStream):
-    def __init__(self, httpcore_stream: typing.Iterable[bytes]):
+    def __init__(self, httpcore_stream: typing.Iterable[bytes]) -> None:
         self._httpcore_stream = httpcore_stream
 
     def __iter__(self) -> typing.Iterator[bytes]:
@@ -119,18 +125,19 @@ class HTTPTransport(BaseTransport):
     def __init__(
         self,
         verify: VerifyTypes = True,
-        cert: typing.Optional[CertTypes] = None,
+        cert: CertTypes | None = None,
         http1: bool = True,
         http2: bool = False,
         limits: Limits = DEFAULT_LIMITS,
         trust_env: bool = True,
-        proxy: typing.Optional[Proxy] = None,
-        uds: typing.Optional[str] = None,
-        local_address: typing.Optional[str] = None,
+        proxy: ProxyTypes | None = None,
+        uds: str | None = None,
+        local_address: str | None = None,
         retries: int = 0,
-        socket_options: typing.Optional[typing.Iterable[SOCKET_OPTION]] = None,
+        socket_options: typing.Iterable[SOCKET_OPTION] | None = None,
     ) -> None:
         ssl_context = create_ssl_context(verify=verify, cert=cert, trust_env=trust_env)
+        proxy = Proxy(url=proxy) if isinstance(proxy, (str, URL)) else proxy
 
         if proxy is None:
             self._pool = httpcore.ConnectionPool(
@@ -190,7 +197,8 @@ class HTTPTransport(BaseTransport):
             )
         else:  # pragma: no cover
             raise ValueError(
-                f"Proxy protocol must be either 'http', 'https', or 'socks5', but got {proxy.url.scheme!r}."
+                "Proxy protocol must be either 'http', 'https', or 'socks5',"
+                f" but got {proxy.url.scheme!r}."
             )
 
     def __enter__(self: T) -> T:  # Use generics for subclass support.
@@ -199,9 +207,9 @@ class HTTPTransport(BaseTransport):
 
     def __exit__(
         self,
-        exc_type: typing.Optional[typing.Type[BaseException]] = None,
-        exc_value: typing.Optional[BaseException] = None,
-        traceback: typing.Optional[TracebackType] = None,
+        exc_type: type[BaseException] | None = None,
+        exc_value: BaseException | None = None,
+        traceback: TracebackType | None = None,
     ) -> None:
         with map_httpcore_exceptions():
             self._pool.__exit__(exc_type, exc_value, traceback)
@@ -241,7 +249,7 @@ class HTTPTransport(BaseTransport):
 
 
 class AsyncResponseStream(AsyncByteStream):
-    def __init__(self, httpcore_stream: typing.AsyncIterable[bytes]):
+    def __init__(self, httpcore_stream: typing.AsyncIterable[bytes]) -> None:
         self._httpcore_stream = httpcore_stream
 
     async def __aiter__(self) -> typing.AsyncIterator[bytes]:
@@ -258,18 +266,19 @@ class AsyncHTTPTransport(AsyncBaseTransport):
     def __init__(
         self,
         verify: VerifyTypes = True,
-        cert: typing.Optional[CertTypes] = None,
+        cert: CertTypes | None = None,
         http1: bool = True,
         http2: bool = False,
         limits: Limits = DEFAULT_LIMITS,
         trust_env: bool = True,
-        proxy: typing.Optional[Proxy] = None,
-        uds: typing.Optional[str] = None,
-        local_address: typing.Optional[str] = None,
+        proxy: ProxyTypes | None = None,
+        uds: str | None = None,
+        local_address: str | None = None,
         retries: int = 0,
-        socket_options: typing.Optional[typing.Iterable[SOCKET_OPTION]] = None,
+        socket_options: typing.Iterable[SOCKET_OPTION] | None = None,
     ) -> None:
         ssl_context = create_ssl_context(verify=verify, cert=cert, trust_env=trust_env)
+        proxy = Proxy(url=proxy) if isinstance(proxy, (str, URL)) else proxy
 
         if proxy is None:
             self._pool = httpcore.AsyncConnectionPool(
@@ -294,6 +303,7 @@ class AsyncHTTPTransport(AsyncBaseTransport):
                 ),
                 proxy_auth=proxy.raw_auth,
                 proxy_headers=proxy.headers.raw,
+                proxy_ssl_context=proxy.ssl_context,
                 ssl_context=ssl_context,
                 max_connections=limits.max_connections,
                 max_keepalive_connections=limits.max_keepalive_connections,
@@ -328,7 +338,8 @@ class AsyncHTTPTransport(AsyncBaseTransport):
             )
         else:  # pragma: no cover
             raise ValueError(
-                f"Proxy protocol must be either 'http', 'https', or 'socks5', but got {proxy.url.scheme!r}."
+                "Proxy protocol must be either 'http', 'https', or 'socks5',"
+                " but got {proxy.url.scheme!r}."
             )
 
     async def __aenter__(self: A) -> A:  # Use generics for subclass support.
@@ -337,9 +348,9 @@ class AsyncHTTPTransport(AsyncBaseTransport):
 
     async def __aexit__(
         self,
-        exc_type: typing.Optional[typing.Type[BaseException]] = None,
-        exc_value: typing.Optional[BaseException] = None,
-        traceback: typing.Optional[TracebackType] = None,
+        exc_type: type[BaseException] | None = None,
+        exc_value: BaseException | None = None,
+        traceback: TracebackType | None = None,
     ) -> None:
         with map_httpcore_exceptions():
             await self._pool.__aexit__(exc_type, exc_value, traceback)
